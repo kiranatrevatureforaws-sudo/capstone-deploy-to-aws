@@ -1,0 +1,33 @@
+# Source control and editor metadata
+.git
+**/.git
+.idea
+**/.idea
+.vscode
+**/.vscode
+
+# Build output and dependencies
+**/target
+**/node_modules
+**/dist
+**/.angular
+**/coverage
+**/.m2
+
+# Local configuration and credentials
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+**/*.pem
+*.key
+**/*.key
+.aws
+**/.aws
+
+# Logs and temporary files
+*.log
+**/*.log
+**/tmp
+**/temp

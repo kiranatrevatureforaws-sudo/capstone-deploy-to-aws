@@ -1,0 +1,148 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test-and-build:
+    name: Test and build all services
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: |
+            product-service/pom.xml
+            catalog-service/pom.xml
+
+      - name: Test product-service
+        run: mvn --batch-mode --no-transfer-progress -f product-service/pom.xml clean verify
+
+      - name: Test catalog-service
+        run: mvn --batch-mode --no-transfer-progress -f catalog-service/pom.xml clean verify
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: angular-app/package-lock.json
+
+      - name: Install Angular dependencies
+        run: npm ci
+        working-directory: angular-app
+
+      - name: Test Angular app
+        run: npm test -- --watch=false
+        working-directory: angular-app
+
+      - name: Build Angular app
+        run: npm run build
+        working-directory: angular-app
+
+      - name: Build Compose images
+        run: docker compose build
+
+  deploy:
+    name: Deploy to EC2
+    needs: test-and-build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    concurrency:
+      group: capstone-production-deployment
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare deployment archive
+        run: |
+          tar -czf "$RUNNER_TEMP/capstone-project.tar.gz" \
+            compose.yml \
+            deploy.sh \
+            angular-app/Dockerfile \
+            angular-app/.dockerignore \
+            angular-app/nginx.conf \
+            angular-app/package.json \
+            angular-app/package-lock.json \
+            angular-app/angular.json \
+            angular-app/tsconfig.json \
+            angular-app/tsconfig.app.json \
+            angular-app/src \
+            angular-app/public \
+            product-service/Dockerfile \
+            product-service/.dockerignore \
+            product-service/pom.xml \
+            product-service/src \
+            catalog-service/Dockerfile \
+            catalog-service/.dockerignore \
+            catalog-service/pom.xml \
+            catalog-service/src
+
+      - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          test -n "$EC2_SSH_KEY" || { echo "Missing EC2_SSH_KEY secret"; exit 1; }
+          test -n "$EC2_KNOWN_HOSTS" || { echo "Missing EC2_KNOWN_HOSTS secret"; exit 1; }
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/ec2_deploy_key"
+          chmod 600 "$HOME/.ssh/ec2_deploy_key"
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Copy project to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PORT: ${{ vars.EC2_SSH_PORT || '22' }}
+        run: |
+          test -n "$EC2_HOST" || { echo "Missing EC2_HOST secret"; exit 1; }
+          test -n "$EC2_USER" || { echo "Missing EC2_USER secret"; exit 1; }
+          scp -i "$HOME/.ssh/ec2_deploy_key" \
+            -P "$EC2_SSH_PORT" \
+            "$RUNNER_TEMP/capstone-project.tar.gz" \
+            "$EC2_USER@$EC2_HOST:/tmp/capstone-project-${GITHUB_SHA}.tar.gz"
+
+      - name: Start Compose stack on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PORT: ${{ vars.EC2_SSH_PORT || '22' }}
+        run: |
+          ssh -i "$HOME/.ssh/ec2_deploy_key" \
+            -p "$EC2_SSH_PORT" \
+            "$EC2_USER@$EC2_HOST" \
+            "mkdir -p \"\$HOME/capstone-project\" &&
+             tar -xzf \"/tmp/capstone-project-${GITHUB_SHA}.tar.gz\" -C \"\$HOME/capstone-project\" &&
+             cd \"\$HOME/capstone-project\" &&
+             sh deploy.sh &&
+             rm -f \"/tmp/capstone-project-${GITHUB_SHA}.tar.gz\""
