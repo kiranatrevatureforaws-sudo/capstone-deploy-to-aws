@@ -1,0 +1,13 @@
+.git
+.idea
+.agents
+.codex
+.aws
+.env
+.env.*
+target
+*.log
+*.pem
+*.key
+README.md
+HELP.md
