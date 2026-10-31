@@ -10,7 +10,11 @@ RUN mvn -B -ntp clean verify && cp target/catalog-service-*.jar /build/app.jar
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
-RUN groupadd --system app && useradd --system --gid app app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app app
 COPY --from=build --chown=app:app /build/app.jar ./app.jar
 
 USER app

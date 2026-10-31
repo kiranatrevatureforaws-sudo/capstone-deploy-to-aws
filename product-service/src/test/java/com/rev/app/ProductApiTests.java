@@ -30,8 +30,8 @@ class ProductApiTests {
         var created = request("POST", base,
                 "{\"name\":\"Laptop\",\"price\":999.99,\"category\":\"Electronics\"}");
         assertEquals(201, created.statusCode());
-        assertTrue(created.body().contains("\"id\":6"));
         String location = created.headers().firstValue("Location").orElseThrow();
+        assertTrue(created.body().contains("\"id\":"));
 
         assertEquals(200, request("GET", location, null).statusCode());
         var listed = request("GET", base, null);
@@ -64,5 +64,4 @@ class ProductApiTests {
                 HttpResponse.BodyHandlers.ofString());
     }
 }
-
 

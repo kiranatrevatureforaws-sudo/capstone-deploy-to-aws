@@ -1,32 +1,55 @@
 services:
   angular-app:
+    image: ${DOCKERHUB_USERNAME:-local}/angular-app:${ANGULAR_TAG:-dev}
     build:
       context: ./angular-app
     ports:
-      - "${HTTP_PORT:-80}:80"
+      - "${HTTP_PORT:-80}:8080"
     depends_on:
-      - product-service
-      - catalog-service
+      product-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     logging:
       options:
         max-size: 10m
         max-file: "3"
 
   product-service:
+    image: ${DOCKERHUB_USERNAME:-local}/product-service:${PRODUCT_TAG:-dev}
     build:
       context: ./product-service
     expose:
       - "8081"
     environment:
       SERVER_PORT: "8081"
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?Set SPRING_DATASOURCE_URL in the deployment .env}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?Set SPRING_DATASOURCE_USERNAME in the deployment .env}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set SPRING_DATASOURCE_PASSWORD in the deployment .env}
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --fail --silent http://localhost:8081/api/products >/dev/null",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     logging:
       options:
         max-size: 10m
         max-file: "3"
 
   catalog-service:
+    image: ${DOCKERHUB_USERNAME:-local}/catalog-service:${CATALOG_TAG:-dev}
     build:
       context: ./catalog-service
     expose:
@@ -35,9 +58,25 @@ services:
       SERVER_PORT: "8080"
       PRODUCT_SERVICE_BASE_URL: http://product-service:8081
     depends_on:
-      - product-service
+      product-service:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --fail --silent http://localhost:8080/api/catalog/products >/dev/null",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     logging:
       options:
         max-size: 10m
         max-file: "3"
+
+networks:
+  default:
+    name: capstone-network
+    driver: bridge
